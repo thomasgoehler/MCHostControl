@@ -1,0 +1,2 @@
+[Service]
+ExecStart=/usr/bin/python3 /opt/meshcore-hostbot/handle_host_request.py
