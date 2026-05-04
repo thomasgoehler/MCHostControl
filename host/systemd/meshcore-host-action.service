@@ -1,2 +1,6 @@
+[Unit]
+Description=Handle MeshCore host action request
+
 [Service]
+Type=oneshot
 ExecStart=/usr/bin/python3 /opt/meshcore-hostbot/handle_host_request.py

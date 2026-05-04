@@ -1,2 +1,11 @@
+[Unit]
+Description=Update host metrics for MeshCore RemoteTerm bot
+
 [Timer]
 OnBootSec=30
+OnUnitActiveSec=30
+AccuracySec=5
+Unit=meshcore-hostbot.service
+
+[Install]
+WantedBy=timers.target

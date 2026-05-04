@@ -1,2 +1,10 @@
+[Unit]
+Description=Watch MeshCore host action request file
+
 [Path]
 PathExists=/opt/meshcore-hostbot/requests/host_action.json
+PathChanged=/opt/meshcore-hostbot/requests/host_action.json
+Unit=meshcore-host-action.service
+
+[Install]
+WantedBy=multi-user.target

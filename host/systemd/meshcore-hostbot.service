@@ -1,2 +1,6 @@
+[Unit]
+Description=Write host metrics for MeshCore RemoteTerm bot
+
 [Service]
+Type=oneshot
 ExecStart=/usr/bin/python3 /opt/meshcore-hostbot/host_metrics.py

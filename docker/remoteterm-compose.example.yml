@@ -1,0 +1,23 @@
+services:
+  remoteterm:
+    image: docker.io/jkingsman/remoteterm-meshcore:latest
+    container_name: remoteterm-meshcore
+    restart: unless-stopped
+    volumes:
+      - /opt/remoteterm/data:/app/data
+      - /opt/meshcore-hostbot:/host-metrics:ro
+      - /opt/meshcore-hostbot/requests:/host-requests:rw
+    devices:
+      - /dev/serial/by-id/YOUR_RADIO_DEVICE:/dev/meshcore-radio
+    environment:
+      MESHCORE_DATABASE_PATH: data/meshcore.db
+      MESHCORE_SERIAL_PORT: /dev/meshcore-radio
+      MESHCORE_SERIAL_BAUDRATE: "115200"
+      MESHCORE_LOG_LEVEL: INFO
+      MESHCORE_DISABLE_BOTS: "false"
+    networks:
+      - meshproxy
+
+networks:
+  meshproxy:
+    external: true
