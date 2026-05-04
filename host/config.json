@@ -1,0 +1,12 @@
+{
+  "allowed_sender_keys": [
+    "CHANGE_ME_SENDER_KEY"
+  ],
+  "allow_reboot": false,
+  "reboot_pin_sha256": "REPLACE_WITH_SHA256_OF_YOUR_PIN",
+  "blocked_docker_containers": [
+    "remoteterm-meshcore",
+    "portainer"
+  ],
+  "blocked_vms": []
+}

@@ -11,15 +11,17 @@ Control and monitor a Linux host via MeshCore RemoteTerm.
 - DM-only command handling
 - Sender key whitelist
 - File-based communication between RemoteTerm container and host
+- Shared host-side `config.json` for bot and action handler
 - No Docker socket or libvirt socket mounted into RemoteTerm
 
 ## Architecture
 
 ```text
 RemoteTerm Python Bot
+  -> reads /host-metrics/config.json
   -> writes /host-requests/host_action.json
   -> host systemd path detects /opt/meshcore-hostbot/requests/host_action.json
-  -> /opt/meshcore-hostbot/handle_host_request.py executes the action
+  -> /opt/meshcore-hostbot/handle_host_request.py validates config and executes the action
   -> writes /opt/meshcore-hostbot/requests/host_action_result.json
   -> bot reads result and replies
 ```
@@ -37,21 +39,22 @@ meshcore-hostbot.timer
 
 ```text
 meshcore-hostbot/
-├── README.md
-├── host/
-│   ├── host_metrics.py
-│   ├── handle_host_request.py
-│   └── systemd/
-│       ├── meshcore-hostbot.service
-│       ├── meshcore-hostbot.timer
-│       ├── meshcore-host-action.service
-│       └── meshcore-host-action.path
-├── remoteterm/
-│   └── bot.py
-├── scripts/
-│   └── update-portainer.sh
-└── docker/
-    └── remoteterm-compose.example.yml
+|- README.md
+|- host/
+|  |- config.json
+|  |- host_metrics.py
+|  |- handle_host_request.py
+|  `- systemd/
+|     |- meshcore-hostbot.service
+|     |- meshcore-hostbot.timer
+|     |- meshcore-host-action.service
+|     `- meshcore-host-action.path
+|- remoteterm/
+|  `- bot.py
+|- scripts/
+|  `- update-portainer.sh
+`- docker/
+   `- remoteterm-compose.example.yml
 ```
 
 ## Installation
@@ -66,17 +69,46 @@ sudo chmod 777 /opt/meshcore-hostbot/requests
 
 The requests directory must be writable by the RemoteTerm container.
 
-### 2. Copy host scripts
+### 2. Copy host files
 
 From the repository root:
 
 ```bash
 sudo cp host/host_metrics.py /opt/meshcore-hostbot/
 sudo cp host/handle_host_request.py /opt/meshcore-hostbot/
+sudo cp host/config.json /opt/meshcore-hostbot/
+sudo chmod 600 /opt/meshcore-hostbot/config.json
 sudo chmod +x /opt/meshcore-hostbot/*.py
 ```
 
-### 3. Install systemd units
+### 3. Configure host policy
+
+Edit `/opt/meshcore-hostbot/config.json`:
+
+```json
+{
+  "allowed_sender_keys": [
+    "CHANGE_ME_SENDER_KEY"
+  ],
+  "allow_reboot": false,
+  "reboot_pin_sha256": "REPLACE_WITH_SHA256_OF_YOUR_PIN",
+  "blocked_docker_containers": [
+    "remoteterm-meshcore",
+    "portainer"
+  ],
+  "blocked_vms": []
+}
+```
+
+Generate a SHA-256 hash for your reboot PIN:
+
+```bash
+printf '%s' 'YOUR_PIN' | sha256sum
+```
+
+Set `allow_reboot` to `true` only if you actually want to enable `!reboot`.
+
+### 4. Install systemd units
 
 ```bash
 sudo cp host/systemd/* /etc/systemd/system/
@@ -85,14 +117,14 @@ sudo systemctl enable --now meshcore-hostbot.timer
 sudo systemctl enable --now meshcore-host-action.path
 ```
 
-### 4. Test metrics
+### 5. Test metrics
 
 ```bash
 sudo /opt/meshcore-hostbot/host_metrics.py
 cat /opt/meshcore-hostbot/metrics.json
 ```
 
-### 5. Configure RemoteTerm Docker volumes
+### 6. Configure RemoteTerm Docker volumes
 
 Add these mounts to the RemoteTerm container:
 
@@ -106,19 +138,9 @@ volumes:
 Important: mount the whole `/opt/meshcore-hostbot` directory, not just `metrics.json`.
 Mounting a single JSON file can lead to stale file handles when the metrics file is atomically replaced.
 
-### 6. Add the RemoteTerm Python Bot
+### 7. Add the RemoteTerm Python Bot
 
 Copy `remoteterm/bot.py` into the RemoteTerm Python Bot UI.
-
-Change these values before using it:
-
-```python
-REBOOT_PIN = "CHANGE_ME"
-
-ALLOWED_CONTROL_SENDER_KEYS = {
-    "CHANGE_ME_SENDER_KEY",
-}
-```
 
 You can discover your sender key with a debug bot:
 
@@ -129,7 +151,7 @@ def bot(**kwargs):
 
 ## Commands
 
-All commands are DM-only and only accepted from whitelisted sender keys.
+All commands are DM-only and only accepted from sender keys allowed in `config.json`.
 
 ### Monitoring
 
@@ -169,16 +191,15 @@ All commands are DM-only and only accepted from whitelisted sender keys.
 
 The bot intentionally does not expose arbitrary shell command execution.
 
-The host action handler dynamically checks whether Docker containers and VMs exist, but blocks critical containers by default:
+Security-relevant policy is enforced on the host:
 
-```python
-BLOCKED_DOCKER_CONTAINERS = {
-    "remoteterm-meshcore",
-    "portainer",
-}
-```
+- allowed sender keys
+- blocked Docker containers
+- blocked VMs
+- reboot enable flag
+- reboot PIN hash
 
-This prevents accidentally stopping the RemoteTerm bot itself or Portainer.
+This means a modified bot alone is not enough to bypass host-side rules.
 
 ## Troubleshooting
 
@@ -186,6 +207,12 @@ Check metrics:
 
 ```bash
 cat /opt/meshcore-hostbot/metrics.json
+```
+
+Check config:
+
+```bash
+cat /opt/meshcore-hostbot/config.json
 ```
 
 Check action result:

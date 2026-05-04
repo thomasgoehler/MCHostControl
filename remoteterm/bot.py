@@ -1,18 +1,20 @@
+import hashlib
 import json
 import time
 from pathlib import Path
 
 
+HOST_CONFIG_FILE = "/host-metrics/config.json"
 METRICS_FILE = "/host-metrics/metrics.json"
 ACTION_REQUEST_FILE = Path("/host-requests/host_action.json")
 ACTION_RESULT_FILE = Path("/host-requests/host_action_result.json")
 
 MAX_METRICS_AGE_SECONDS = 3600
-REBOOT_PIN = "CHANGE_ME"
 
-ALLOWED_CONTROL_SENDER_KEYS = {
-    "CHANGE_ME_SENDER_KEY",
-}
+
+def load_host_config() -> dict:
+    with open(HOST_CONFIG_FILE, "r", encoding="utf-8") as file_handle:
+        return json.load(file_handle)
 
 
 def format_bytes(value: int) -> str:
@@ -44,11 +46,12 @@ def load_metrics() -> dict:
         return json.load(file_handle)
 
 
-def is_allowed_context(kwargs: dict) -> bool:
+def is_allowed_context(kwargs: dict, config: dict) -> bool:
     if not kwargs.get("is_dm", False):
         return False
 
-    return kwargs.get("sender_key") in ALLOWED_CONTROL_SENDER_KEYS
+    allowed_sender_keys = set(config.get("allowed_sender_keys", []))
+    return kwargs.get("sender_key") in allowed_sender_keys
 
 
 def get_metrics_or_error() -> tuple[dict | None, str | None]:
@@ -70,6 +73,7 @@ def get_metrics_or_error() -> tuple[dict | None, str | None]:
 
 def write_action_request_and_wait(request: dict) -> str:
     request["created_at"] = int(time.time())
+    temporary_file = ACTION_REQUEST_FILE.with_suffix(".tmp")
 
     try:
         ACTION_RESULT_FILE.unlink()
@@ -77,8 +81,10 @@ def write_action_request_and_wait(request: dict) -> str:
         pass
 
     try:
-        ACTION_REQUEST_FILE.write_text(json.dumps(request), encoding="utf-8")
+        temporary_file.write_text(json.dumps(request), encoding="utf-8")
+        temporary_file.replace(ACTION_REQUEST_FILE)
     except Exception as error:
+        temporary_file.unlink(missing_ok=True)
         return f"Could not create host action request: {error}"
 
     for _ in range(10):
@@ -136,7 +142,7 @@ def format_temperatures(metrics: dict) -> list[str] | str:
         return "No temperature sensors found."
 
     return [
-        f"{item.get('name', 'sensor')}: {item.get('celsius', '?')}°C"
+        f"{item.get('name', 'sensor')}: {item.get('celsius', '?')} C"
         for item in temperatures[:8]
     ]
 
@@ -167,17 +173,18 @@ def format_vms(metrics: dict) -> list[str] | str:
     return lines
 
 
-def handle_reboot(kwargs: dict, parts: list[str]) -> str:
+def handle_reboot(kwargs: dict, parts: list[str], config: dict) -> str:
     if len(parts) != 2:
         return "Usage: !reboot <PIN>"
 
-    if parts[1].strip() != REBOOT_PIN:
-        return "Invalid reboot PIN."
+    if not config.get("allow_reboot", False):
+        return "Host reboot is disabled."
 
     return write_action_request_and_wait(
         {
             "type": "reboot",
             "action": "reboot",
+            "pin_sha256": hashlib.sha256(parts[1].strip().encode("utf-8")).hexdigest(),
             "sender_name": kwargs.get("sender_name"),
             "sender_key": kwargs.get("sender_key"),
         }
@@ -237,13 +244,21 @@ def read_last_action_result() -> str:
 
 
 def bot(**kwargs):
-    if not is_allowed_context(kwargs):
-        return None
-
     message_text = str(kwargs.get("message_text", "")).strip()
     parts = message_text.split()
 
     if not parts:
+        return None
+
+    if not kwargs.get("is_dm", False):
+        return None
+
+    try:
+        config = load_host_config()
+    except Exception as error:
+        return f"Host config not available: {error}"
+
+    if not is_allowed_context(kwargs, config):
         return None
 
     command = parts[0].lower()
@@ -263,7 +278,7 @@ def bot(**kwargs):
         )
 
     if command == "!reboot":
-        return handle_reboot(kwargs, parts)
+        return handle_reboot(kwargs, parts, config)
 
     if command == "!dockerctl":
         return handle_docker_control(kwargs, parts)

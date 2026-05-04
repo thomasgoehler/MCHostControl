@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import subprocess
 import time
 from pathlib import Path
 
 
-REQUEST_FILE = Path("/opt/meshcore-hostbot/requests/host_action.json")
-RESULT_FILE = Path("/opt/meshcore-hostbot/requests/host_action_result.json")
+BASE_DIR = Path("/opt/meshcore-hostbot")
+CONFIG_FILE = BASE_DIR / "config.json"
+REQUEST_FILE = BASE_DIR / "requests" / "host_action.json"
+RESULT_FILE = BASE_DIR / "requests" / "host_action_result.json"
 MAX_REQUEST_AGE_SECONDS = 300
 
 
-BLOCKED_DOCKER_CONTAINERS = {
-    "remoteterm-meshcore",
-    "portainer",
-}
-
-
-BLOCKED_VMS = set()
+def load_config() -> dict:
+    with open(CONFIG_FILE, "r", encoding="utf-8") as file_handle:
+        return json.load(file_handle)
 
 
 def write_result(success: bool, message: str) -> None:
@@ -59,13 +58,64 @@ def vm_exists(name: str) -> bool:
     return success
 
 
+def validate_request_age(request: dict) -> bool:
+    created_at = int(request.get("created_at", 0))
+    age_seconds = int(time.time()) - created_at
+
+    if age_seconds < 0 or age_seconds > MAX_REQUEST_AGE_SECONDS:
+        write_result(False, f"Request expired: {age_seconds}s old")
+        return False
+
+    return True
+
+
+def validate_sender(config: dict, request: dict) -> bool:
+    allowed_sender_keys = set(config.get("allowed_sender_keys", []))
+    sender_key = str(request.get("sender_key", "")).strip()
+
+    if not sender_key:
+        write_result(False, "Missing sender key.")
+        return False
+
+    if sender_key not in allowed_sender_keys:
+        write_result(False, f"Sender key is not allowed: {sender_key}")
+        return False
+
+    return True
+
+
+def validate_reboot_pin(config: dict, request: dict) -> bool:
+    if not config.get("allow_reboot", False):
+        write_result(False, "Host reboot is disabled.")
+        return False
+
+    expected_hash = str(config.get("reboot_pin_sha256", "")).strip().lower()
+    provided_hash = str(request.get("pin_sha256", "")).strip().lower()
+
+    if not expected_hash:
+        write_result(False, "Reboot PIN hash is not configured.")
+        return False
+
+    if len(provided_hash) != 64 or any(character not in "0123456789abcdef" for character in provided_hash):
+        write_result(False, "Invalid reboot PIN hash.")
+        return False
+
+    if provided_hash != expected_hash:
+        write_result(False, "Invalid reboot PIN.")
+        return False
+
+    return True
+
+
 def handle_reboot() -> None:
     write_result(True, "Host reboot accepted.")
     subprocess.run(["/usr/bin/systemctl", "reboot"], check=False)
 
 
-def handle_docker(action: str, name: str) -> None:
-    if name in BLOCKED_DOCKER_CONTAINERS:
+def handle_docker(config: dict, action: str, name: str) -> None:
+    blocked_containers = set(config.get("blocked_docker_containers", []))
+
+    if name in blocked_containers:
         write_result(False, f"Container is blocked: {name}")
         return
 
@@ -85,8 +135,10 @@ def handle_docker(action: str, name: str) -> None:
         write_result(False, f"Docker {action} failed for {name}: {output}")
 
 
-def handle_vm(action: str, name: str) -> None:
-    if name in BLOCKED_VMS:
+def handle_vm(config: dict, action: str, name: str) -> None:
+    blocked_vms = set(config.get("blocked_vms", []))
+
+    if name in blocked_vms:
         write_result(False, f"VM is blocked: {name}")
         return
 
@@ -127,24 +179,22 @@ def load_request() -> dict | None:
     return request
 
 
-def validate_request_age(request: dict) -> bool:
-    created_at = int(request.get("created_at", 0))
-    age_seconds = int(time.time()) - created_at
-
-    if age_seconds < 0 or age_seconds > MAX_REQUEST_AGE_SECONDS:
-        write_result(False, f"Request expired: {age_seconds}s old")
-        return False
-
-    return True
-
-
 def main() -> None:
     request = load_request()
 
     if request is None:
         return
 
+    try:
+        config = load_config()
+    except Exception as error:
+        write_result(False, f"Could not load host config: {error}")
+        return
+
     if not validate_request_age(request):
+        return
+
+    if not validate_sender(config, request):
         return
 
     request_type = request.get("type")
@@ -152,15 +202,16 @@ def main() -> None:
     name = request.get("name", "")
 
     if request_type == "reboot" and action == "reboot":
-        handle_reboot()
+        if validate_reboot_pin(config, request):
+            handle_reboot()
         return
 
     if request_type == "docker":
-        handle_docker(action, name)
+        handle_docker(config, action, name)
         return
 
     if request_type == "vm":
-        handle_vm(action, name)
+        handle_vm(config, action, name)
         return
 
     write_result(False, f"Unknown request: type={request_type}, action={action}")
