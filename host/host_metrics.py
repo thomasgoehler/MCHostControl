@@ -340,8 +340,7 @@ def build_android_display(devices: list[dict], config: dict) -> list[str]:
 
     lines = [f"android: {len(devices)} device(s)"]
     for device in devices[:limit]:
-        label = str(device.get("model") or device.get("device") or device.get("serial"))
-        lines.append(f"{label}: {device.get('state', 'unknown')}")
+        lines.append(f"{device.get('serial', 'unknown')}: {device.get('state', 'unknown')}")
     return lines
 
 
