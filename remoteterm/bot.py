@@ -9,6 +9,7 @@ METRICS_FILE = "/host-metrics/metrics.json"
 ACTION_REQUEST_FILE = Path("/host-requests/host_action.json")
 ACTION_RESULT_FILE = Path("/host-requests/host_action_result.json")
 
+MAX_MESSAGE_LEN = 133
 MAX_METRICS_AGE_SECONDS = 3600
 
 
@@ -39,6 +40,79 @@ def format_uptime(seconds: int) -> str:
     if hours > 0:
         return f"{hours}h {minutes:02d}m"
     return f"{minutes}m"
+
+
+def split_text(text: str, limit: int = MAX_MESSAGE_LEN) -> list[str]:
+    text = " ".join(str(text).split())
+    if not text:
+        return [""]
+
+    if len(text) <= limit:
+        return [text]
+
+    words = text.split(" ")
+    chunks = []
+    current = ""
+    content_limit = max(1, limit - 6)
+
+    for word in words:
+        if not current:
+            if len(word) <= content_limit:
+                current = word
+                continue
+
+            while len(word) > content_limit:
+                chunks.append(word[:content_limit])
+                word = word[content_limit:]
+
+            current = word
+            continue
+
+        candidate = f"{current} {word}"
+        if len(candidate) <= content_limit:
+            current = candidate
+            continue
+
+        chunks.append(current)
+
+        if len(word) <= content_limit:
+            current = word
+            continue
+
+        while len(word) > content_limit:
+            chunks.append(word[:content_limit])
+            word = word[content_limit:]
+
+        current = word
+
+    if current:
+        chunks.append(current)
+
+    if len(chunks) == 1:
+        return chunks
+
+    numbered = []
+    total = len(chunks)
+    for index, chunk in enumerate(chunks, start=1):
+        prefix = f"{index}/{total} "
+        numbered.append(f"{prefix}{chunk[: limit - len(prefix)]}")
+
+    return numbered
+
+
+def normalize_response(response: str | list[str] | None) -> str | list[str] | None:
+    if response is None:
+        return None
+
+    if isinstance(response, str):
+        parts = split_text(response)
+        return parts if len(parts) > 1 else parts[0]
+
+    messages = []
+    for item in response:
+        messages.extend(split_text(item))
+
+    return messages
 
 
 def load_metrics() -> dict:
@@ -101,37 +175,35 @@ def write_action_request_and_wait(request: dict) -> str:
     return "ERROR: No response from host"
 
 
-def format_host(metrics: dict) -> list[str]:
+def short_status(text: str, replacements: dict[str, str]) -> str:
+    status = " ".join(str(text).split()).lower()
+
+    for source, target in replacements.items():
+        status = status.replace(source, target)
+
+    return status
+
+
+def format_host(metrics: dict) -> str:
     memory = metrics.get("memory", {})
     disk = metrics.get("disk", {})
-    load_average = metrics.get("load_average", [0, 0, 0])
-
-    return [
-        f"Host {metrics.get('hostname', 'unknown')} ({metrics.get('_age_seconds', 0)}s old)",
-        f"Load: {load_average[0]} {load_average[1]} {load_average[2]} | CPU: {metrics.get('cpu_percent', 0)}%",
-        (
-            f"RAM: {format_bytes(memory.get('used_bytes', 0))}/"
-            f"{format_bytes(memory.get('total_bytes', 0))} "
-            f"({memory.get('used_percent', 0)}%)"
-        ),
-        (
-            f"Disk {disk.get('path', '/')}: {format_bytes(disk.get('used_bytes', 0))}/"
-            f"{format_bytes(disk.get('total_bytes', 0))} "
-            f"({disk.get('used_percent', 0)}%)"
-        ),
-        f"Uptime: {format_uptime(metrics.get('uptime_seconds', 0))} | IP: {metrics.get('ip_address', 'unknown')}",
-    ]
+    return (
+        f"host {metrics.get('hostname', 'unknown')} {metrics.get('_age_seconds', 0)}s | "
+        f"cpu {metrics.get('cpu_percent', 0)}% | "
+        f"ram {memory.get('used_percent', 0)}% | "
+        f"disk {disk.get('used_percent', 0)}% | "
+        f"up {format_uptime(metrics.get('uptime_seconds', 0))}"
+    )
 
 
 def format_disk(metrics: dict) -> str:
     disk = metrics.get("disk", {})
 
     return (
-        f"Disk {disk.get('path', '/')}: "
+        f"disk {disk.get('path', '/')}: "
         f"{format_bytes(disk.get('used_bytes', 0))}/"
-        f"{format_bytes(disk.get('total_bytes', 0))} used "
-        f"({disk.get('used_percent', 0)}%), "
-        f"free {format_bytes(disk.get('free_bytes', 0))}"
+        f"{format_bytes(disk.get('total_bytes', 0))} "
+        f"({disk.get('used_percent', 0)}%) free {format_bytes(disk.get('free_bytes', 0))}"
     )
 
 
@@ -141,10 +213,7 @@ def format_temperatures(metrics: dict) -> list[str] | str:
     if not temperatures:
         return "No temperature sensors found."
 
-    return [
-        f"{item.get('name', 'sensor')}: {item.get('celsius', '?')} C"
-        for item in temperatures[:8]
-    ]
+    return [f"temp {item.get('name', 'sensor')}: {item.get('celsius', '?')} C" for item in temperatures[:8]]
 
 
 def format_docker(metrics: dict) -> list[str] | str:
@@ -153,9 +222,12 @@ def format_docker(metrics: dict) -> list[str] | str:
     if not containers:
         return "No Docker containers found."
 
-    lines = [f"Docker containers: {len(containers)}"]
+    lines = [f"docker total: {len(containers)}"]
     for container in containers[:10]:
-        lines.append(f"{container.get('name')}: {container.get('status')}")
+        lines.append(
+            f"{container.get('name')}: "
+            f"{short_status(container.get('status', ''), {'up ': 'up ', 'exited': 'down', 'created': 'new'})}"
+        )
 
     return lines
 
@@ -166,9 +238,9 @@ def format_vms(metrics: dict) -> list[str] | str:
     if not vms:
         return "No KVM VMs found."
 
-    lines = [f"KVM VMs: {len(vms)}"]
+    lines = [f"vms total: {len(vms)}"]
     for vm in vms[:10]:
-        lines.append(f"{vm.get('name')}: {vm.get('state')}")
+        lines.append(f"{vm.get('name')}: {short_status(vm.get('state', ''), {})}")
 
     return lines
 
@@ -243,6 +315,15 @@ def read_last_action_result() -> str:
     return f"{status}: {result.get('message', 'no message')}"
 
 
+def format_help() -> list[str]:
+    return [
+        "!host !disk !temp !docker !vms",
+        "!dockerctl start|stop|restart <name>",
+        "!vmctl start|stop|restart <name>",
+        "!reboot <PIN> !result",
+    ]
+
+
 def bot(**kwargs):
     message_text = str(kwargs.get("message_text", "")).strip()
     parts = message_text.split()
@@ -256,7 +337,7 @@ def bot(**kwargs):
     try:
         config = load_host_config()
     except Exception as error:
-        return f"Host config not available: {error}"
+        return normalize_response(f"Host config not available: {error}")
 
     if not is_allowed_context(kwargs, config):
         return None
@@ -264,51 +345,40 @@ def bot(**kwargs):
     command = parts[0].lower()
 
     if command == "!help":
-        return (
-            "Commands:\n"
-            "- host: send !host\n"
-            "- disk: send !disk\n"
-            "- temp: send !temp\n"
-            "- docker list: send !docker\n"
-            "- vms list: send !vms\n"
-            "- docker control: !dockerctl start|stop|restart <name>\n"
-            "- vm control: !vmctl start|stop|restart <name>\n"
-            "- reboot: !reboot <PIN>\n"
-            "- last action result: !result"
-        )
+        return normalize_response(format_help())
 
     if command == "!reboot":
-        return handle_reboot(kwargs, parts, config)
+        return normalize_response(handle_reboot(kwargs, parts, config))
 
     if command == "!dockerctl":
-        return handle_docker_control(kwargs, parts)
+        return normalize_response(handle_docker_control(kwargs, parts))
 
     if command == "!vmctl":
-        return handle_vm_control(kwargs, parts)
+        return normalize_response(handle_vm_control(kwargs, parts))
 
     if command == "!result":
-        return read_last_action_result()
+        return normalize_response(read_last_action_result())
 
     if command not in {"!host", "!status", "!server", "!disk", "!temp", "!docker", "!vms"}:
         return None
 
     metrics, error = get_metrics_or_error()
     if error:
-        return error
+        return normalize_response(error)
 
     if command in {"!host", "!status", "!server"}:
-        return format_host(metrics)
+        return normalize_response(format_host(metrics))
 
     if command == "!disk":
-        return format_disk(metrics)
+        return normalize_response(format_disk(metrics))
 
     if command == "!temp":
-        return format_temperatures(metrics)
+        return normalize_response(format_temperatures(metrics))
 
     if command == "!docker":
-        return format_docker(metrics)
+        return normalize_response(format_docker(metrics))
 
     if command == "!vms":
-        return format_vms(metrics)
+        return normalize_response(format_vms(metrics))
 
     return None
