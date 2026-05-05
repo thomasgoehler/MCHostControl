@@ -118,6 +118,47 @@ def command_enabled(config: JsonDict, command_name: str) -> bool:
     return command_name in enabled_commands
 
 
+def get_command_triggers(config: JsonDict) -> JsonDict:
+    return dict(config.get("commands", {}).get("triggers", {}))
+
+
+def safe_trigger_label(trigger: str) -> str:
+    if not trigger:
+        return ""
+
+    prefix_names = {
+        "!": "bang",
+        "/": "slash",
+        "#": "hash",
+        ".": "dot",
+    }
+
+    prefix = trigger[0]
+    if prefix in prefix_names and len(trigger) > 1:
+        return f"{prefix_names[prefix]} {trigger[1:]}"
+
+    return trigger
+
+
+def primary_trigger(config: JsonDict, command_name: str, fallback: str) -> str:
+    triggers = get_command_triggers(config)
+    values = triggers.get(command_name, [])
+    if isinstance(values, list) and values:
+        return str(values[0])
+    return fallback
+
+
+def resolve_command(command_token: str, config: JsonDict) -> str | None:
+    token = command_token.lower()
+    for command_name, triggers in get_command_triggers(config).items():
+        if not isinstance(triggers, list):
+            continue
+        normalized = {str(trigger).lower() for trigger in triggers}
+        if token in normalized:
+            return str(command_name)
+    return None
+
+
 def get_metrics_or_error() -> tuple[JsonDict | None, str | None]:
     try:
         metrics = load_metrics()
@@ -280,15 +321,19 @@ def format_help(config: JsonDict) -> list[str]:
 
     lines = []
     if base:
-        lines.append(f"cmds: bang {', '.join(base)}")
+        labels = [safe_trigger_label(primary_trigger(config, name, name)) for name in base]
+        lines.append(f"cmds: {', '.join(labels)}")
     if "dockerctl" in control:
         actions = "|".join(config.get("commands", {}).get("docker_actions", ["start", "stop", "restart"]))
-        lines.append(f"docker ctl: bang dockerctl {actions} <name>")
+        trigger = safe_trigger_label(primary_trigger(config, "dockerctl", "!dockerctl"))
+        lines.append(f"docker ctl: {trigger} {actions} <name>")
     if "vmctl" in control:
         actions = "|".join(config.get("commands", {}).get("vm_actions", ["start", "stop", "restart"]))
-        lines.append(f"vm ctl: bang vmctl {actions} <name>")
+        trigger = safe_trigger_label(primary_trigger(config, "vmctl", "!vmctl"))
+        lines.append(f"vm ctl: {trigger} {actions} <name>")
     if "reboot" in control:
-        lines.append("reboot: bang reboot <PIN>")
+        trigger = safe_trigger_label(primary_trigger(config, "reboot", "!reboot"))
+        lines.append(f"reboot: {trigger} <PIN>")
     return lines or ["No commands enabled."]
 
 
@@ -340,58 +385,51 @@ def bot(**kwargs):
     if not is_allowed_context(kwargs, config):
         return None
 
-    command = parts[0].lower()
+    command_name = resolve_command(parts[0], config)
+    if command_name is None:
+        return None
 
-    if command == "!help":
+    if not command_enabled(config, command_name):
+        return normalize_response(f"Command is disabled: {command_name}", config)
+
+    if command_name == "help":
         return normalize_response(format_help(config), config)
 
-    if command == "!reboot":
+    if command_name == "reboot":
         return normalize_response(handle_reboot(kwargs, parts, config), config)
 
-    if command == "!dockerctl":
+    if command_name == "dockerctl":
         return normalize_response(handle_docker_control(kwargs, parts, config), config)
 
-    if command == "!vmctl":
+    if command_name == "vmctl":
         return normalize_response(handle_vm_control(kwargs, parts, config), config)
 
-    if command == "!result":
+    if command_name == "result":
         return normalize_response(read_last_action_result(), config)
 
-    if command == "!alerts":
-        if not command_enabled(config, "alerts"):
-            return normalize_response("Command is disabled: alerts", config)
+    if command_name == "alerts":
         metrics = require_metrics(config)
         if not isinstance(metrics, dict):
             return metrics
         return normalize_response(format_alerts(metrics), config)
 
-    if command not in {"!host", "!status", "!server", "!disk", "!temp", "!docker", "!vms"}:
-        return None
-
-    command_name = command.lstrip("!")
-    if command in {"!status", "!server"}:
-        command_name = "host"
-
-    if not command_enabled(config, command_name):
-        return normalize_response(f"Command is disabled: {command_name}", config)
-
     metrics = require_metrics(config)
     if not isinstance(metrics, dict):
         return metrics
 
-    if command in {"!host", "!status", "!server"}:
+    if command_name == "host":
         return normalize_response(format_host(metrics), config)
 
-    if command == "!disk":
+    if command_name == "disk":
         return normalize_response(format_disk(metrics), config)
 
-    if command == "!temp":
+    if command_name == "temp":
         return normalize_response(format_temperatures(metrics), config)
 
-    if command == "!docker":
+    if command_name == "docker":
         return normalize_response(format_docker(metrics), config)
 
-    if command == "!vms":
+    if command_name == "vms":
         return normalize_response(format_vms(metrics), config)
 
     return None

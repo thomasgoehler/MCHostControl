@@ -23,6 +23,19 @@
       "vmctl",
       "reboot"
     ],
+    "triggers": {
+      "help": ["!help"],
+      "alerts": ["!alerts"],
+      "host": ["!host", "!status", "!server"],
+      "disk": ["!disk"],
+      "temp": ["!temp"],
+      "docker": ["!docker"],
+      "vms": ["!vms"],
+      "result": ["!result"],
+      "dockerctl": ["!dockerctl"],
+      "vmctl": ["!vmctl"],
+      "reboot": ["!reboot"]
+    },
     "docker_actions": [
       "start",
       "stop",

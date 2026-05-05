@@ -114,6 +114,19 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
       "vmctl",
       "reboot"
     ],
+    "triggers": {
+      "help": ["!help"],
+      "alerts": ["!alerts"],
+      "host": ["!host", "!status", "!server"],
+      "disk": ["!disk"],
+      "temp": ["!temp"],
+      "docker": ["!docker"],
+      "vms": ["!vms"],
+      "result": ["!result"],
+      "dockerctl": ["!dockerctl"],
+      "vmctl": ["!vmctl"],
+      "reboot": ["!reboot"]
+    },
     "docker_actions": ["start", "stop", "restart"],
     "vm_actions": ["start", "stop", "restart"]
   },
@@ -146,6 +159,7 @@ Set `allow_reboot` to `true` only if you actually want to enable `!reboot`.
 Useful host-side knobs:
 
 - `commands.enabled`: turn commands on or off without editing the bot
+- `commands.triggers`: map incoming MeshCore commands to host-managed command names
 - `commands.docker_actions` and `commands.vm_actions`: restrict allowed control actions
 - `display.max_message_len`: keeps the bot aligned with MeshCore message limits
 - `display.max_list_items`: controls how many containers, VMs or temperatures are shown
