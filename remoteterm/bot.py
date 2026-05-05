@@ -126,16 +126,9 @@ def safe_trigger_label(trigger: str) -> str:
     if not trigger:
         return ""
 
-    prefix_names = {
-        "!": "bang",
-        "/": "slash",
-        "#": "hash",
-        ".": "dot",
-    }
-
     prefix = trigger[0]
-    if prefix in prefix_names and len(trigger) > 1:
-        return f"{prefix_names[prefix]} {trigger[1:]}"
+    if prefix in {"!", "/", "#", "."} and len(trigger) > 1:
+        return f"{prefix}\u2060{trigger[1:]}"
 
     return trigger
 
