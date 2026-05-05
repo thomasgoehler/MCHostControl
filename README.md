@@ -13,6 +13,7 @@ Control and monitor a Linux host via MeshCore RemoteTerm.
 - File-based communication between RemoteTerm container and host
 - Shared host-side `config.json` for bot and action handler
 - `config.example.json` template committed, real config kept local
+- Host config also controls UI limits, enabled commands, alerts and display names
 - No Docker socket or libvirt socket mounted into RemoteTerm
 
 ## Architecture
@@ -20,6 +21,7 @@ Control and monitor a Linux host via MeshCore RemoteTerm.
 ```text
 RemoteTerm Python Bot
   -> reads /host-metrics/config.json
+  -> reads prepared summaries from /host-metrics/metrics.json
   -> writes /host-requests/host_action.json
   -> host systemd path detects /opt/meshcore-hostbot/requests/host_action.json
   -> /opt/meshcore-hostbot/handle_host_request.py validates config and executes the action
@@ -97,7 +99,39 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
     "remoteterm-meshcore",
     "portainer"
   ],
-  "blocked_vms": []
+  "blocked_vms": [],
+  "commands": {
+    "enabled": [
+      "help",
+      "alerts",
+      "host",
+      "disk",
+      "temp",
+      "docker",
+      "vms",
+      "result",
+      "dockerctl",
+      "vmctl",
+      "reboot"
+    ],
+    "docker_actions": ["start", "stop", "restart"],
+    "vm_actions": ["start", "stop", "restart"]
+  },
+  "display": {
+    "max_message_len": 133,
+    "max_list_items": 8,
+    "temperature_unit": "C",
+    "compact_mode": true
+  },
+  "thresholds": {
+    "cpu_warn_percent": 85,
+    "ram_warn_percent": 90,
+    "disk_warn_percent": 90
+  },
+  "names": {
+    "docker": {},
+    "vms": {}
+  }
 }
 ```
 
@@ -108,6 +142,15 @@ printf '%s' 'YOUR_PIN' | sha256sum
 ```
 
 Set `allow_reboot` to `true` only if you actually want to enable `!reboot`.
+
+Useful host-side knobs:
+
+- `commands.enabled`: turn commands on or off without editing the bot
+- `commands.docker_actions` and `commands.vm_actions`: restrict allowed control actions
+- `display.max_message_len`: keeps the bot aligned with MeshCore message limits
+- `display.max_list_items`: controls how many containers, VMs or temperatures are shown
+- `names.docker` and `names.vms`: optional display aliases for long service names
+- `thresholds.*`: warn levels used to build the `alerts` list in `metrics.json`
 
 ### 4. Install systemd units
 
@@ -158,6 +201,7 @@ All commands are DM-only and only accepted from sender keys allowed in `config.j
 
 ```text
 !help
+!alerts
 !host
 !disk
 !temp
@@ -199,6 +243,9 @@ Security-relevant policy is enforced on the host:
 - blocked VMs
 - reboot enable flag
 - reboot PIN hash
+- enabled commands and actions
+- message length and list display limits
+- alert thresholds and display aliases
 
 This means a modified bot alone is not enough to bypass host-side rules.
 

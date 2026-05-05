@@ -9,7 +9,7 @@ METRICS_FILE = "/host-metrics/metrics.json"
 ACTION_REQUEST_FILE = Path("/host-requests/host_action.json")
 ACTION_RESULT_FILE = Path("/host-requests/host_action_result.json")
 
-MAX_MESSAGE_LEN = 133
+DEFAULT_MAX_MESSAGE_LEN = 133
 MAX_METRICS_AGE_SECONDS = 3600
 
 
@@ -18,31 +18,17 @@ def load_host_config() -> dict:
         return json.load(file_handle)
 
 
-def format_bytes(value: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    size = float(value)
-
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-
-    return f"{size:.1f} TB"
+def load_metrics() -> dict:
+    with open(METRICS_FILE, "r", encoding="utf-8") as file_handle:
+        return json.load(file_handle)
 
 
-def format_uptime(seconds: int) -> str:
-    days = seconds // 86400
-    hours = (seconds % 86400) // 3600
-    minutes = (seconds % 3600) // 60
-
-    if days > 0:
-        return f"{days}d {hours:02d}h"
-    if hours > 0:
-        return f"{hours}h {minutes:02d}m"
-    return f"{minutes}m"
+def get_max_message_len(config: dict) -> int:
+    configured = int(config.get("display", {}).get("max_message_len", DEFAULT_MAX_MESSAGE_LEN))
+    return max(32, configured)
 
 
-def split_text(text: str, limit: int = MAX_MESSAGE_LEN) -> list[str]:
+def split_text(text: str, limit: int) -> list[str]:
     text = " ".join(str(text).split())
     if not text:
         return [""]
@@ -100,24 +86,21 @@ def split_text(text: str, limit: int = MAX_MESSAGE_LEN) -> list[str]:
     return numbered
 
 
-def normalize_response(response: str | list[str] | None) -> str | list[str] | None:
+def normalize_response(response: str | list[str] | None, config: dict) -> str | list[str] | None:
     if response is None:
         return None
 
+    limit = get_max_message_len(config)
+
     if isinstance(response, str):
-        parts = split_text(response)
+        parts = split_text(response, limit)
         return parts if len(parts) > 1 else parts[0]
 
     messages = []
     for item in response:
-        messages.extend(split_text(item))
+        messages.extend(split_text(item, limit))
 
     return messages
-
-
-def load_metrics() -> dict:
-    with open(METRICS_FILE, "r", encoding="utf-8") as file_handle:
-        return json.load(file_handle)
 
 
 def is_allowed_context(kwargs: dict, config: dict) -> bool:
@@ -126,6 +109,11 @@ def is_allowed_context(kwargs: dict, config: dict) -> bool:
 
     allowed_sender_keys = set(config.get("allowed_sender_keys", []))
     return kwargs.get("sender_key") in allowed_sender_keys
+
+
+def command_enabled(config: dict, command_name: str) -> bool:
+    enabled_commands = set(config.get("commands", {}).get("enabled", []))
+    return command_name in enabled_commands
 
 
 def get_metrics_or_error() -> tuple[dict | None, str | None]:
@@ -175,79 +163,12 @@ def write_action_request_and_wait(request: dict) -> str:
     return "ERROR: No response from host"
 
 
-def short_status(text: str, replacements: dict[str, str]) -> str:
-    status = " ".join(str(text).split()).lower()
-
-    for source, target in replacements.items():
-        status = status.replace(source, target)
-
-    return status
-
-
-def format_host(metrics: dict) -> str:
-    memory = metrics.get("memory", {})
-    disk = metrics.get("disk", {})
-    return (
-        f"host {metrics.get('hostname', 'unknown')} {metrics.get('_age_seconds', 0)}s | "
-        f"cpu {metrics.get('cpu_percent', 0)}% | "
-        f"ram {memory.get('used_percent', 0)}% | "
-        f"disk {disk.get('used_percent', 0)}% | "
-        f"up {format_uptime(metrics.get('uptime_seconds', 0))}"
-    )
-
-
-def format_disk(metrics: dict) -> str:
-    disk = metrics.get("disk", {})
-
-    return (
-        f"disk {disk.get('path', '/')}: "
-        f"{format_bytes(disk.get('used_bytes', 0))}/"
-        f"{format_bytes(disk.get('total_bytes', 0))} "
-        f"({disk.get('used_percent', 0)}%) free {format_bytes(disk.get('free_bytes', 0))}"
-    )
-
-
-def format_temperatures(metrics: dict) -> list[str] | str:
-    temperatures = metrics.get("temperatures", [])
-
-    if not temperatures:
-        return "No temperature sensors found."
-
-    return [f"temp {item.get('name', 'sensor')}: {item.get('celsius', '?')} C" for item in temperatures[:8]]
-
-
-def format_docker(metrics: dict) -> list[str] | str:
-    containers = metrics.get("docker_containers", [])
-
-    if not containers:
-        return "No Docker containers found."
-
-    lines = [f"docker total: {len(containers)}"]
-    for container in containers[:10]:
-        lines.append(
-            f"{container.get('name')}: "
-            f"{short_status(container.get('status', ''), {'up ': 'up ', 'exited': 'down', 'created': 'new'})}"
-        )
-
-    return lines
-
-
-def format_vms(metrics: dict) -> list[str] | str:
-    vms = metrics.get("kvm_vms", [])
-
-    if not vms:
-        return "No KVM VMs found."
-
-    lines = [f"vms total: {len(vms)}"]
-    for vm in vms[:10]:
-        lines.append(f"{vm.get('name')}: {short_status(vm.get('state', ''), {})}")
-
-    return lines
-
-
 def handle_reboot(kwargs: dict, parts: list[str], config: dict) -> str:
     if len(parts) != 2:
-        return "Usage: !reboot <PIN>"
+        return "usage: bang reboot <PIN>"
+
+    if not command_enabled(config, "reboot"):
+        return "Reboot command is disabled."
 
     if not config.get("allow_reboot", False):
         return "Host reboot is disabled."
@@ -263,42 +184,46 @@ def handle_reboot(kwargs: dict, parts: list[str], config: dict) -> str:
     )
 
 
-def handle_docker_control(kwargs: dict, parts: list[str]) -> str:
+def handle_docker_control(kwargs: dict, parts: list[str], config: dict) -> str:
     if len(parts) != 3:
-        return "Usage: !dockerctl <start|stop|restart> <container>"
+        return "usage: bang dockerctl <start|stop|restart> <container>"
+
+    if not command_enabled(config, "dockerctl"):
+        return "Docker control is disabled."
 
     action = parts[1].lower()
-    name = parts[2]
-
-    if action not in {"start", "stop", "restart"}:
+    allowed_actions = set(config.get("commands", {}).get("docker_actions", ["start", "stop", "restart"]))
+    if action not in allowed_actions:
         return "Invalid Docker action."
 
     return write_action_request_and_wait(
         {
             "type": "docker",
             "action": action,
-            "name": name,
+            "name": parts[2],
             "sender_name": kwargs.get("sender_name"),
             "sender_key": kwargs.get("sender_key"),
         }
     )
 
 
-def handle_vm_control(kwargs: dict, parts: list[str]) -> str:
+def handle_vm_control(kwargs: dict, parts: list[str], config: dict) -> str:
     if len(parts) != 3:
-        return "Usage: !vmctl <start|stop|restart> <vm>"
+        return "usage: bang vmctl <start|stop|restart> <vm>"
+
+    if not command_enabled(config, "vmctl"):
+        return "VM control is disabled."
 
     action = parts[1].lower()
-    name = parts[2]
-
-    if action not in {"start", "stop", "restart"}:
+    allowed_actions = set(config.get("commands", {}).get("vm_actions", ["start", "stop", "restart"]))
+    if action not in allowed_actions:
         return "Invalid VM action."
 
     return write_action_request_and_wait(
         {
             "type": "vm",
             "action": action,
-            "name": name,
+            "name": parts[2],
             "sender_name": kwargs.get("sender_name"),
             "sender_key": kwargs.get("sender_key"),
         }
@@ -315,13 +240,75 @@ def read_last_action_result() -> str:
     return f"{status}: {result.get('message', 'no message')}"
 
 
-def format_help() -> list[str]:
-    return [
-        "!host !disk !temp !docker !vms",
-        "!dockerctl start|stop|restart <name>",
-        "!vmctl start|stop|restart <name>",
-        "!reboot <PIN> !result",
-    ]
+def format_help(config: dict) -> list[str]:
+    enabled = set(config.get("commands", {}).get("enabled", []))
+    base = []
+    control = []
+
+    if "host" in enabled:
+        base.append("host")
+    if "alerts" in enabled:
+        base.append("alerts")
+    if "disk" in enabled:
+        base.append("disk")
+    if "temp" in enabled:
+        base.append("temp")
+    if "docker" in enabled:
+        base.append("docker")
+    if "vms" in enabled:
+        base.append("vms")
+    if "result" in enabled:
+        base.append("result")
+
+    if "dockerctl" in enabled:
+        control.append("dockerctl")
+    if "vmctl" in enabled:
+        control.append("vmctl")
+    if "reboot" in enabled:
+        control.append("reboot")
+
+    lines = []
+    if base:
+        lines.append(f"cmds: bang {', '.join(base)}")
+    if "dockerctl" in control:
+        actions = "|".join(config.get("commands", {}).get("docker_actions", ["start", "stop", "restart"]))
+        lines.append(f"docker ctl: bang dockerctl {actions} <name>")
+    if "vmctl" in control:
+        actions = "|".join(config.get("commands", {}).get("vm_actions", ["start", "stop", "restart"]))
+        lines.append(f"vm ctl: bang vmctl {actions} <name>")
+    if "reboot" in control:
+        lines.append("reboot: bang reboot <PIN>")
+    return lines or ["No commands enabled."]
+
+
+def format_host(metrics: dict) -> str:
+    return str(metrics.get("summary") or "Host summary unavailable.")
+
+
+def format_disk(metrics: dict) -> str:
+    return str(metrics.get("disk_summary") or "Disk summary unavailable.")
+
+
+def format_temperatures(metrics: dict) -> list[str] | str:
+    display = metrics.get("temperature_display", [])
+    return display or "No temperature sensors found."
+
+
+def format_docker(metrics: dict) -> list[str] | str:
+    display = metrics.get("docker_display", [])
+    return display or "No Docker containers found."
+
+
+def format_vms(metrics: dict) -> list[str] | str:
+    display = metrics.get("vm_display", [])
+    return display or "No KVM VMs found."
+
+
+def format_alerts(metrics: dict) -> list[str] | str:
+    alerts = metrics.get("alerts", [])
+    if not alerts:
+        return "no alerts"
+    return [f"alert: {alert}" for alert in alerts]
 
 
 def bot(**kwargs):
@@ -337,7 +324,7 @@ def bot(**kwargs):
     try:
         config = load_host_config()
     except Exception as error:
-        return normalize_response(f"Host config not available: {error}")
+        return normalize_response(f"Host config not available: {error}", {})
 
     if not is_allowed_context(kwargs, config):
         return None
@@ -345,40 +332,55 @@ def bot(**kwargs):
     command = parts[0].lower()
 
     if command == "!help":
-        return normalize_response(format_help())
+        return normalize_response(format_help(config), config)
 
     if command == "!reboot":
-        return normalize_response(handle_reboot(kwargs, parts, config))
+        return normalize_response(handle_reboot(kwargs, parts, config), config)
 
     if command == "!dockerctl":
-        return normalize_response(handle_docker_control(kwargs, parts))
+        return normalize_response(handle_docker_control(kwargs, parts, config), config)
 
     if command == "!vmctl":
-        return normalize_response(handle_vm_control(kwargs, parts))
+        return normalize_response(handle_vm_control(kwargs, parts, config), config)
 
     if command == "!result":
-        return normalize_response(read_last_action_result())
+        return normalize_response(read_last_action_result(), config)
+
+    if command == "!alerts":
+        if not command_enabled(config, "alerts"):
+            return normalize_response("Command is disabled: alerts", config)
+        metrics, error = get_metrics_or_error()
+        if error:
+            return normalize_response(error, config)
+        return normalize_response(format_alerts(metrics), config)
 
     if command not in {"!host", "!status", "!server", "!disk", "!temp", "!docker", "!vms"}:
         return None
 
+    command_name = command.lstrip("!")
+    if command in {"!status", "!server"}:
+        command_name = "host"
+
+    if not command_enabled(config, command_name):
+        return normalize_response(f"Command is disabled: {command_name}", config)
+
     metrics, error = get_metrics_or_error()
     if error:
-        return normalize_response(error)
+        return normalize_response(error, config)
 
     if command in {"!host", "!status", "!server"}:
-        return normalize_response(format_host(metrics))
+        return normalize_response(format_host(metrics), config)
 
     if command == "!disk":
-        return normalize_response(format_disk(metrics))
+        return normalize_response(format_disk(metrics), config)
 
     if command == "!temp":
-        return normalize_response(format_temperatures(metrics))
+        return normalize_response(format_temperatures(metrics), config)
 
     if command == "!docker":
-        return normalize_response(format_docker(metrics))
+        return normalize_response(format_docker(metrics), config)
 
     if command == "!vms":
-        return normalize_response(format_vms(metrics))
+        return normalize_response(format_vms(metrics), config)
 
     return None

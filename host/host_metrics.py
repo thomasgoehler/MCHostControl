@@ -9,7 +9,17 @@ import time
 from pathlib import Path
 
 
-OUTPUT_FILE = Path("/opt/meshcore-hostbot/metrics.json")
+BASE_DIR = Path("/opt/meshcore-hostbot")
+CONFIG_FILE = BASE_DIR / "config.json"
+OUTPUT_FILE = BASE_DIR / "metrics.json"
+
+
+def load_config() -> dict:
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as file_handle:
+            return json.load(file_handle)
+    except OSError:
+        return {}
 
 
 def run_command(command: list[str], timeout: int = 5) -> tuple[bool, str]:
@@ -33,6 +43,30 @@ def read_first_line(path: str) -> str:
             return file_handle.readline().strip()
     except OSError:
         return ""
+
+
+def format_bytes(value: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(value)
+
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+
+    return f"{size:.1f} TB"
+
+
+def format_uptime(seconds: int) -> str:
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    minutes = (seconds % 3600) // 60
+
+    if days > 0:
+        return f"{days}d {hours:02d}h"
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m"
 
 
 def get_uptime_seconds() -> int:
@@ -164,7 +198,121 @@ def get_kvm_vms() -> list[dict]:
     return vms
 
 
+def short_status(text: str, replacements: dict[str, str]) -> str:
+    status = " ".join(str(text).split()).lower()
+    for source, target in replacements.items():
+        status = status.replace(source, target)
+    return status
+
+
+def get_display_name(kind: str, name: str, config: dict) -> str:
+    names = config.get("names", {})
+    kind_names = names.get(kind, {})
+    return str(kind_names.get(name, name))
+
+
+def format_temperature(item: dict, unit: str) -> str:
+    celsius = float(item.get("celsius", 0))
+    if unit.upper() == "F":
+        fahrenheit = round((celsius * 9 / 5) + 32, 1)
+        return f"{item.get('name', 'sensor')}: {fahrenheit} F"
+    return f"{item.get('name', 'sensor')}: {celsius} C"
+
+
+def build_docker_display(containers: list[dict], config: dict) -> list[str]:
+    limit = int(config.get("display", {}).get("max_list_items", 8))
+    lines = [f"docker total: {len(containers)}"]
+    for container in containers[:limit]:
+        name = str(container.get("name", "unknown"))
+        display_name = get_display_name("docker", name, config)
+        status = short_status(
+            container.get("status", ""),
+            {"up ": "up ", "exited": "down", "created": "new"},
+        )
+        lines.append(f"{display_name}: {status}")
+    return lines
+
+
+def build_vm_display(vms: list[dict], config: dict) -> list[str]:
+    limit = int(config.get("display", {}).get("max_list_items", 8))
+    lines = [f"vms total: {len(vms)}"]
+    for vm in vms[:limit]:
+        name = str(vm.get("name", "unknown"))
+        display_name = get_display_name("vms", name, config)
+        lines.append(f"{display_name}: {short_status(vm.get('state', ''), {})}")
+    return lines
+
+
+def build_temperature_display(temperatures: list[dict], config: dict) -> list[str]:
+    unit = str(config.get("display", {}).get("temperature_unit", "C"))
+    limit = int(config.get("display", {}).get("max_list_items", 8))
+    if not temperatures:
+        return ["No temperature sensors found."]
+    return [f"temp {format_temperature(item, unit)}" for item in temperatures[:limit]]
+
+
+def build_alerts(metrics: dict, config: dict) -> list[str]:
+    thresholds = config.get("thresholds", {})
+    alerts = []
+
+    cpu_warn = float(thresholds.get("cpu_warn_percent", 85))
+    ram_warn = float(thresholds.get("ram_warn_percent", 90))
+    disk_warn = float(thresholds.get("disk_warn_percent", 90))
+
+    if float(metrics.get("cpu_percent", 0)) >= cpu_warn:
+        alerts.append(f"cpu {metrics.get('cpu_percent', 0)}%")
+
+    memory = metrics.get("memory", {})
+    if float(memory.get("used_percent", 0)) >= ram_warn:
+        alerts.append(f"ram {memory.get('used_percent', 0)}%")
+
+    disk = metrics.get("disk", {})
+    if float(disk.get("used_percent", 0)) >= disk_warn:
+        alerts.append(f"disk {disk.get('used_percent', 0)}%")
+
+    for container in metrics.get("docker_containers", []):
+        status = short_status(container.get("status", ""), {})
+        if "unhealthy" in status or status.startswith("down"):
+            name = get_display_name("docker", str(container.get("name", "unknown")), config)
+            alerts.append(f"docker {name} {status}")
+
+    for vm in metrics.get("kvm_vms", []):
+        state = short_status(vm.get("state", ""), {})
+        if state not in {"running", "idle"}:
+            name = get_display_name("vms", str(vm.get("name", "unknown")), config)
+            alerts.append(f"vm {name} {state}")
+
+    return alerts
+
+
+def build_summary(metrics: dict) -> str:
+    memory = metrics.get("memory", {})
+    disk = metrics.get("disk", {})
+    return (
+        f"host {metrics.get('hostname', 'unknown')} | "
+        f"cpu {metrics.get('cpu_percent', 0)}% | "
+        f"ram {memory.get('used_percent', 0)}% | "
+        f"disk {disk.get('used_percent', 0)}% | "
+        f"up {format_uptime(metrics.get('uptime_seconds', 0))}"
+    )
+
+
+def build_disk_summary(metrics: dict) -> str:
+    disk = metrics.get("disk", {})
+    return (
+        f"disk {disk.get('path', '/')}: "
+        f"{format_bytes(disk.get('used_bytes', 0))}/"
+        f"{format_bytes(disk.get('total_bytes', 0))} "
+        f"({disk.get('used_percent', 0)}%) free {format_bytes(disk.get('free_bytes', 0))}"
+    )
+
+
 def main() -> None:
+    config = load_config()
+    temperatures = get_temperatures()
+    docker_containers = get_docker_containers()
+    kvm_vms = get_kvm_vms()
+
     metrics = {
         "timestamp": int(time.time()),
         "hostname": socket.gethostname(),
@@ -173,11 +321,24 @@ def main() -> None:
         "cpu_percent": get_cpu_percent(),
         "memory": get_memory_info(),
         "disk": get_disk_info("/"),
-        "temperatures": get_temperatures(),
-        "docker_containers": get_docker_containers(),
-        "kvm_vms": get_kvm_vms(),
+        "temperatures": temperatures,
+        "docker_containers": docker_containers,
+        "kvm_vms": kvm_vms,
         "uptime_seconds": get_uptime_seconds(),
+        "summary": "",
+        "disk_summary": "",
+        "temperature_display": [],
+        "docker_display": [],
+        "vm_display": [],
+        "alerts": [],
     }
+
+    metrics["summary"] = build_summary(metrics)
+    metrics["disk_summary"] = build_disk_summary(metrics)
+    metrics["temperature_display"] = build_temperature_display(temperatures, config)
+    metrics["docker_display"] = build_docker_display(docker_containers, config)
+    metrics["vm_display"] = build_vm_display(kvm_vms, config)
+    metrics["alerts"] = build_alerts(metrics, config)
 
     temporary_file = OUTPUT_FILE.with_suffix(".tmp")
     temporary_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")

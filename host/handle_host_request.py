@@ -19,6 +19,11 @@ def load_config() -> dict:
         return json.load(file_handle)
 
 
+def command_enabled(config: dict, command_name: str) -> bool:
+    enabled_commands = set(config.get("commands", {}).get("enabled", []))
+    return command_name in enabled_commands
+
+
 def write_result(success: bool, message: str) -> None:
     result = {
         "timestamp": int(time.time()),
@@ -85,6 +90,10 @@ def validate_sender(config: dict, request: dict) -> bool:
 
 
 def validate_reboot_pin(config: dict, request: dict) -> bool:
+    if not command_enabled(config, "reboot"):
+        write_result(False, "Reboot command is disabled.")
+        return False
+
     if not config.get("allow_reboot", False):
         write_result(False, "Host reboot is disabled.")
         return False
@@ -113,7 +122,12 @@ def handle_reboot() -> None:
 
 
 def handle_docker(config: dict, action: str, name: str) -> None:
+    if not command_enabled(config, "dockerctl"):
+        write_result(False, "Docker control is disabled.")
+        return
+
     blocked_containers = set(config.get("blocked_docker_containers", []))
+    allowed_actions = set(config.get("commands", {}).get("docker_actions", ["start", "stop", "restart"]))
 
     if name in blocked_containers:
         write_result(False, f"Container is blocked: {name}")
@@ -123,7 +137,7 @@ def handle_docker(config: dict, action: str, name: str) -> None:
         write_result(False, f"Container not found: {name}")
         return
 
-    if action not in {"start", "stop", "restart"}:
+    if action not in allowed_actions:
         write_result(False, f"Invalid Docker action: {action}")
         return
 
@@ -136,7 +150,12 @@ def handle_docker(config: dict, action: str, name: str) -> None:
 
 
 def handle_vm(config: dict, action: str, name: str) -> None:
+    if not command_enabled(config, "vmctl"):
+        write_result(False, "VM control is disabled.")
+        return
+
     blocked_vms = set(config.get("blocked_vms", []))
+    allowed_actions = set(config.get("commands", {}).get("vm_actions", ["start", "stop", "restart"]))
 
     if name in blocked_vms:
         write_result(False, f"VM is blocked: {name}")
@@ -146,15 +165,16 @@ def handle_vm(config: dict, action: str, name: str) -> None:
         write_result(False, f"VM not found: {name}")
         return
 
+    if action not in allowed_actions:
+        write_result(False, f"Invalid VM action: {action}")
+        return
+
     if action == "start":
         command = ["virsh", "start", name]
     elif action == "stop":
         command = ["virsh", "shutdown", name]
     elif action == "restart":
         command = ["virsh", "reboot", name]
-    else:
-        write_result(False, f"Invalid VM action: {action}")
-        return
 
     success, output = run_command(command)
 
