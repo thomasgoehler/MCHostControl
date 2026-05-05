@@ -5,3 +5,4 @@ __pycache__/
 metrics.json
 host_action.json
 host_action_result.json
+host/config.json

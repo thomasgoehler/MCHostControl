@@ -12,6 +12,7 @@ Control and monitor a Linux host via MeshCore RemoteTerm.
 - Sender key whitelist
 - File-based communication between RemoteTerm container and host
 - Shared host-side `config.json` for bot and action handler
+- `config.example.json` template committed, real config kept local
 - No Docker socket or libvirt socket mounted into RemoteTerm
 
 ## Architecture
@@ -41,7 +42,7 @@ meshcore-hostbot.timer
 meshcore-hostbot/
 |- README.md
 |- host/
-|  |- config.json
+|  |- config.example.json
 |  |- host_metrics.py
 |  |- handle_host_request.py
 |  `- systemd/
@@ -76,14 +77,14 @@ From the repository root:
 ```bash
 sudo cp host/host_metrics.py /opt/meshcore-hostbot/
 sudo cp host/handle_host_request.py /opt/meshcore-hostbot/
-sudo cp host/config.json /opt/meshcore-hostbot/
+sudo cp host/config.example.json /opt/meshcore-hostbot/config.json
 sudo chmod 600 /opt/meshcore-hostbot/config.json
 sudo chmod +x /opt/meshcore-hostbot/*.py
 ```
 
 ### 3. Configure host policy
 
-Edit `/opt/meshcore-hostbot/config.json`:
+Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.json`, then edit `/opt/meshcore-hostbot/config.json`:
 
 ```json
 {
