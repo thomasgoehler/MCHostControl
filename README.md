@@ -146,7 +146,8 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
     "disk_warn_percent": 90
   },
   "monitoring": {
-    "robot_process_keywords": ["pabot", "robot", "pybot"]
+    "robot_process_keywords": ["robotcode", "pabot", "robot", "pybot"],
+    "robot_project_paths": []
   },
   "names": {
     "docker": {},
@@ -170,7 +171,8 @@ Useful host-side knobs:
 - `commands.docker_actions` and `commands.vm_actions`: restrict allowed control actions
 - `display.max_message_len`: keeps the bot aligned with MeshCore message limits
 - `display.max_list_items`: controls how many containers, VMs or temperatures are shown
-- `monitoring.robot_process_keywords`: controls which process names count as running Robot Framework jobs
+- `monitoring.robot_process_keywords`: controls which process names count as Robot Framework runners
+- `monitoring.robot_project_paths`: optional path filter to limit Robot detection to a specific workspace
 - `names.docker` and `names.vms`: optional display aliases for long service names
 - `thresholds.*`: warn levels used to build the `alerts` list in `metrics.json`
 

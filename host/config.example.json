@@ -64,10 +64,12 @@
   },
   "monitoring": {
     "robot_process_keywords": [
+      "robotcode",
       "pabot",
       "robot",
       "pybot"
-    ]
+    ],
+    "robot_project_paths": []
   },
   "names": {
     "docker": {},

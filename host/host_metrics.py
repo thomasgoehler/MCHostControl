@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -198,12 +199,57 @@ def get_kvm_vms() -> list[dict]:
     return vms
 
 
+def extract_robot_target(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+
+    for index, part in enumerate(parts):
+        if part in {"-t", "--test"} and index + 1 < len(parts):
+            target = parts[index + 1].strip()
+            if "." in target:
+                target = target.split(".")[-1]
+            return target
+
+    for index, part in enumerate(parts):
+        if part in {"-s", "--suite"} and index + 1 < len(parts):
+            target = parts[index + 1].strip()
+            if "." in target:
+                target = target.split(".")[-1]
+            return target
+
+    for part in reversed(parts):
+        if part.endswith(".robot"):
+            return Path(part).stem
+
+    return ""
+
+
+def is_robotframework_run(command: str, config: dict) -> bool:
+    lowered = command.lower()
+    monitoring = config.get("monitoring", {})
+    keywords = [
+        str(item).lower()
+        for item in monitoring.get("robot_process_keywords", ["pabot", "robot", "pybot"])
+    ]
+    required_paths = [str(item).lower() for item in monitoring.get("robot_project_paths", [])]
+
+    if not any(keyword and keyword in lowered for keyword in keywords):
+        return False
+
+    if required_paths and not any(path and path in lowered for path in required_paths):
+        return False
+
+    robot_markers = [" robotcode ", " pabot", " robot ", ".robot", " --test ", " -t ", " --suite ", " -s "]
+    return any(marker in f" {lowered} " for marker in robot_markers)
+
+
 def get_robotframework_processes(config: dict) -> list[dict]:
     success, output = run_command(["ps", "-eo", "pid=,args="], timeout=10)
     if not success:
         return [{"pid": 0, "command": f"process check unavailable: {output}"}]
 
-    keywords = [str(item).lower() for item in config.get("monitoring", {}).get("robot_process_keywords", ["pabot", "robot", "pybot"])]
     processes = []
 
     for line in output.splitlines():
@@ -216,11 +262,16 @@ def get_robotframework_processes(config: dict) -> list[dict]:
             continue
 
         pid_text, command = parts
-        lowered = command.lower()
-        if not any(keyword and keyword in lowered for keyword in keywords):
+        if not is_robotframework_run(command, config):
             continue
 
-        processes.append({"pid": int(pid_text), "command": command})
+        processes.append(
+            {
+                "pid": int(pid_text),
+                "command": command,
+                "target": extract_robot_target(command),
+            }
+        )
 
     return processes
 
@@ -323,8 +374,17 @@ def build_robot_display(processes: list[dict], config: dict) -> list[str]:
     if processes[0].get("pid") == 0:
         return [f"robot: {processes[0].get('command', 'unavailable')}"]
 
+    targets = [str(process.get("target", "")).strip() for process in processes if str(process.get("target", "")).strip()]
+    if len(processes) == 1 and targets:
+        return [f"robot: {targets[0]}"]
+
     lines = [f"robot: running {len(processes)}"]
     for process in processes[:limit]:
+        target = str(process.get("target", "")).strip()
+        if target:
+            lines.append(f"pid {process.get('pid')}: {target}")
+            continue
+
         command = " ".join(str(process.get("command", "")).split())
         lines.append(f"pid {process.get('pid')}: {command[:90]}")
     return lines
