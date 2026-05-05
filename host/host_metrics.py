@@ -2,7 +2,6 @@
 
 import json
 import os
-import shlex
 import shutil
 import socket
 import subprocess
@@ -199,83 +198,6 @@ def get_kvm_vms() -> list[dict]:
     return vms
 
 
-def extract_robot_target(command: str) -> str:
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        parts = command.split()
-
-    for index, part in enumerate(parts):
-        if part in {"-t", "--test"} and index + 1 < len(parts):
-            target = parts[index + 1].strip()
-            if "." in target:
-                target = target.split(".")[-1]
-            return target
-
-    for index, part in enumerate(parts):
-        if part in {"-s", "--suite"} and index + 1 < len(parts):
-            target = parts[index + 1].strip()
-            if "." in target:
-                target = target.split(".")[-1]
-            return target
-
-    for part in reversed(parts):
-        if part.endswith(".robot"):
-            return Path(part).stem
-
-    return ""
-
-
-def is_robotframework_run(command: str, config: dict) -> bool:
-    lowered = command.lower()
-    monitoring = config.get("monitoring", {})
-    keywords = [
-        str(item).lower()
-        for item in monitoring.get("robot_process_keywords", ["pabot", "robot", "pybot"])
-    ]
-    required_paths = [str(item).lower() for item in monitoring.get("robot_project_paths", [])]
-
-    if not any(keyword and keyword in lowered for keyword in keywords):
-        return False
-
-    if required_paths and not any(path and path in lowered for path in required_paths):
-        return False
-
-    robot_markers = [" robotcode ", " pabot", " robot ", ".robot", " --test ", " -t ", " --suite ", " -s "]
-    return any(marker in f" {lowered} " for marker in robot_markers)
-
-
-def get_robotframework_processes(config: dict) -> list[dict]:
-    success, output = run_command(["ps", "-eo", "pid=,args="], timeout=10)
-    if not success:
-        return [{"pid": 0, "command": f"process check unavailable: {output}"}]
-
-    processes = []
-
-    for line in output.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        parts = line.split(None, 1)
-        if len(parts) != 2:
-            continue
-
-        pid_text, command = parts
-        if not is_robotframework_run(command, config):
-            continue
-
-        processes.append(
-            {
-                "pid": int(pid_text),
-                "command": command,
-                "target": extract_robot_target(command),
-            }
-        )
-
-    return processes
-
-
 def get_android_devices() -> list[dict]:
     success, output = run_command(["adb", "devices", "-l"], timeout=10)
     if not success:
@@ -366,30 +288,6 @@ def build_temperature_display(temperatures: list[dict], config: dict) -> list[st
     return [f"temp {format_temperature(item, unit)}" for item in temperatures[:limit]]
 
 
-def build_robot_display(processes: list[dict], config: dict) -> list[str]:
-    limit = int(config.get("display", {}).get("max_list_items", 8))
-    if not processes:
-        return ["robot: idle"]
-
-    if processes[0].get("pid") == 0:
-        return [f"robot: {processes[0].get('command', 'unavailable')}"]
-
-    targets = [str(process.get("target", "")).strip() for process in processes if str(process.get("target", "")).strip()]
-    if len(processes) == 1 and targets:
-        return [f"robot: {targets[0]}"]
-
-    lines = [f"robot: running {len(processes)}"]
-    for process in processes[:limit]:
-        target = str(process.get("target", "")).strip()
-        if target:
-            lines.append(f"pid {process.get('pid')}: {target}")
-            continue
-
-        command = " ".join(str(process.get("command", "")).split())
-        lines.append(f"pid {process.get('pid')}: {command[:90]}")
-    return lines
-
-
 def build_android_display(devices: list[dict], config: dict) -> list[str]:
     limit = int(config.get("display", {}).get("max_list_items", 8))
     if not devices:
@@ -441,14 +339,13 @@ def build_alerts(metrics: dict, config: dict) -> list[str]:
 def build_summary(metrics: dict) -> str:
     memory = metrics.get("memory", {})
     disk = metrics.get("disk", {})
-    robot_running = len([item for item in metrics.get("robot_processes", []) if int(item.get("pid", 0)) > 0])
     android_connected = len([item for item in metrics.get("android_devices", []) if str(item.get("serial", "")) != "adb unavailable"])
     return (
         f"host {metrics.get('hostname', 'unknown')} | "
         f"cpu {metrics.get('cpu_percent', 0)}% | "
         f"ram {memory.get('used_percent', 0)}% | "
         f"disk {disk.get('used_percent', 0)}% | "
-        f"rf {robot_running} | adb {android_connected} | "
+        f"adb {android_connected} | "
         f"up {format_uptime(metrics.get('uptime_seconds', 0))}"
     )
 
@@ -468,7 +365,6 @@ def main() -> None:
     temperatures = get_temperatures()
     docker_containers = get_docker_containers()
     kvm_vms = get_kvm_vms()
-    robot_processes = get_robotframework_processes(config)
     android_devices = get_android_devices()
 
     metrics = {
@@ -482,7 +378,6 @@ def main() -> None:
         "temperatures": temperatures,
         "docker_containers": docker_containers,
         "kvm_vms": kvm_vms,
-        "robot_processes": robot_processes,
         "android_devices": android_devices,
         "uptime_seconds": get_uptime_seconds(),
         "summary": "",
@@ -490,7 +385,6 @@ def main() -> None:
         "temperature_display": [],
         "docker_display": [],
         "vm_display": [],
-        "robot_display": [],
         "android_display": [],
         "alerts": [],
     }
@@ -500,7 +394,6 @@ def main() -> None:
     metrics["temperature_display"] = build_temperature_display(temperatures, config)
     metrics["docker_display"] = build_docker_display(docker_containers, config)
     metrics["vm_display"] = build_vm_display(kvm_vms, config)
-    metrics["robot_display"] = build_robot_display(robot_processes, config)
     metrics["android_display"] = build_android_display(android_devices, config)
     metrics["alerts"] = build_alerts(metrics, config)
 
