@@ -2,6 +2,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from typing import Any, TypeAlias
 
 
 HOST_CONFIG_FILE = "/host-metrics/config.json"
@@ -11,19 +12,20 @@ ACTION_RESULT_FILE = Path("/host-requests/host_action_result.json")
 
 DEFAULT_MAX_MESSAGE_LEN = 133
 MAX_METRICS_AGE_SECONDS = 3600
+JsonDict: TypeAlias = dict[str, Any]
 
 
-def load_host_config() -> dict:
+def load_host_config() -> JsonDict:
     with open(HOST_CONFIG_FILE, "r", encoding="utf-8") as file_handle:
         return json.load(file_handle)
 
 
-def load_metrics() -> dict:
+def load_metrics() -> JsonDict:
     with open(METRICS_FILE, "r", encoding="utf-8") as file_handle:
         return json.load(file_handle)
 
 
-def get_max_message_len(config: dict) -> int:
+def get_max_message_len(config: JsonDict) -> int:
     configured = int(config.get("display", {}).get("max_message_len", DEFAULT_MAX_MESSAGE_LEN))
     return max(32, configured)
 
@@ -86,7 +88,7 @@ def split_text(text: str, limit: int) -> list[str]:
     return numbered
 
 
-def normalize_response(response: str | list[str] | None, config: dict) -> str | list[str] | None:
+def normalize_response(response: str | list[str] | None, config: JsonDict) -> str | list[str] | None:
     if response is None:
         return None
 
@@ -103,7 +105,7 @@ def normalize_response(response: str | list[str] | None, config: dict) -> str | 
     return messages
 
 
-def is_allowed_context(kwargs: dict, config: dict) -> bool:
+def is_allowed_context(kwargs: dict, config: JsonDict) -> bool:
     if not kwargs.get("is_dm", False):
         return False
 
@@ -111,12 +113,12 @@ def is_allowed_context(kwargs: dict, config: dict) -> bool:
     return kwargs.get("sender_key") in allowed_sender_keys
 
 
-def command_enabled(config: dict, command_name: str) -> bool:
+def command_enabled(config: JsonDict, command_name: str) -> bool:
     enabled_commands = set(config.get("commands", {}).get("enabled", []))
     return command_name in enabled_commands
 
 
-def get_metrics_or_error() -> tuple[dict | None, str | None]:
+def get_metrics_or_error() -> tuple[JsonDict | None, str | None]:
     try:
         metrics = load_metrics()
     except Exception as error:
@@ -131,6 +133,15 @@ def get_metrics_or_error() -> tuple[dict | None, str | None]:
 
     metrics["_age_seconds"] = age_seconds
     return metrics, None
+
+
+def require_metrics(config: JsonDict) -> JsonDict | str | list[str]:
+    metrics, error = get_metrics_or_error()
+    if error:
+        return normalize_response(error, config) or "Host metrics unavailable."
+    if metrics is None:
+        return normalize_response("Host metrics unavailable.", config) or "Host metrics unavailable."
+    return metrics
 
 
 def write_action_request_and_wait(request: dict) -> str:
@@ -163,7 +174,7 @@ def write_action_request_and_wait(request: dict) -> str:
     return "ERROR: No response from host"
 
 
-def handle_reboot(kwargs: dict, parts: list[str], config: dict) -> str:
+def handle_reboot(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 2:
         return "usage: bang reboot <PIN>"
 
@@ -184,7 +195,7 @@ def handle_reboot(kwargs: dict, parts: list[str], config: dict) -> str:
     )
 
 
-def handle_docker_control(kwargs: dict, parts: list[str], config: dict) -> str:
+def handle_docker_control(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 3:
         return "usage: bang dockerctl <start|stop|restart> <container>"
 
@@ -207,7 +218,7 @@ def handle_docker_control(kwargs: dict, parts: list[str], config: dict) -> str:
     )
 
 
-def handle_vm_control(kwargs: dict, parts: list[str], config: dict) -> str:
+def handle_vm_control(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 3:
         return "usage: bang vmctl <start|stop|restart> <vm>"
 
@@ -240,7 +251,7 @@ def read_last_action_result() -> str:
     return f"{status}: {result.get('message', 'no message')}"
 
 
-def format_help(config: dict) -> list[str]:
+def format_help(config: JsonDict) -> list[str]:
     enabled = set(config.get("commands", {}).get("enabled", []))
     base = []
     control = []
@@ -281,30 +292,30 @@ def format_help(config: dict) -> list[str]:
     return lines or ["No commands enabled."]
 
 
-def format_host(metrics: dict) -> str:
+def format_host(metrics: JsonDict) -> str:
     return str(metrics.get("summary") or "Host summary unavailable.")
 
 
-def format_disk(metrics: dict) -> str:
+def format_disk(metrics: JsonDict) -> str:
     return str(metrics.get("disk_summary") or "Disk summary unavailable.")
 
 
-def format_temperatures(metrics: dict) -> list[str] | str:
+def format_temperatures(metrics: JsonDict) -> list[str] | str:
     display = metrics.get("temperature_display", [])
     return display or "No temperature sensors found."
 
 
-def format_docker(metrics: dict) -> list[str] | str:
+def format_docker(metrics: JsonDict) -> list[str] | str:
     display = metrics.get("docker_display", [])
     return display or "No Docker containers found."
 
 
-def format_vms(metrics: dict) -> list[str] | str:
+def format_vms(metrics: JsonDict) -> list[str] | str:
     display = metrics.get("vm_display", [])
     return display or "No KVM VMs found."
 
 
-def format_alerts(metrics: dict) -> list[str] | str:
+def format_alerts(metrics: JsonDict) -> list[str] | str:
     alerts = metrics.get("alerts", [])
     if not alerts:
         return "no alerts"
@@ -349,9 +360,9 @@ def bot(**kwargs):
     if command == "!alerts":
         if not command_enabled(config, "alerts"):
             return normalize_response("Command is disabled: alerts", config)
-        metrics, error = get_metrics_or_error()
-        if error:
-            return normalize_response(error, config)
+        metrics = require_metrics(config)
+        if not isinstance(metrics, dict):
+            return metrics
         return normalize_response(format_alerts(metrics), config)
 
     if command not in {"!host", "!status", "!server", "!disk", "!temp", "!docker", "!vms"}:
@@ -364,9 +375,9 @@ def bot(**kwargs):
     if not command_enabled(config, command_name):
         return normalize_response(f"Command is disabled: {command_name}", config)
 
-    metrics, error = get_metrics_or_error()
-    if error:
-        return normalize_response(error, config)
+    metrics = require_metrics(config)
+    if not isinstance(metrics, dict):
+        return metrics
 
     if command in {"!host", "!status", "!server"}:
         return normalize_response(format_host(metrics), config)
