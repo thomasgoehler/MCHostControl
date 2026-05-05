@@ -121,6 +121,35 @@ def handle_reboot() -> None:
     subprocess.run(["/usr/bin/systemctl", "reboot"], check=False)
 
 
+def handle_updates(config: dict) -> None:
+    if not command_enabled(config, "updates"):
+        write_result(False, "Updates command is disabled.")
+        return
+
+    success, output = run_command(
+        ["apt-get", "update", "-o", "Acquire::Retries=1"],
+        timeout=300,
+    )
+    if not success:
+        write_result(False, f"apt update failed: {output}")
+        return
+
+    success, output = run_command(["apt", "list", "--upgradable"], timeout=60)
+    if not success:
+        write_result(False, f"Could not read upgradable packages: {output}")
+        return
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    packages = [line for line in lines if not line.startswith("Listing...")]
+    count = len(packages)
+
+    if count == 0:
+        write_result(True, "System is up to date.")
+        return
+
+    write_result(True, f"{count} package(s) can be upgraded.")
+
+
 def handle_docker(config: dict, action: str, name: str) -> None:
     if not command_enabled(config, "dockerctl"):
         write_result(False, "Docker control is disabled.")
@@ -224,6 +253,10 @@ def main() -> None:
     if request_type == "reboot" and action == "reboot":
         if validate_reboot_pin(config, request):
             handle_reboot()
+        return
+
+    if request_type == "updates" and action == "check":
+        handle_updates(config)
         return
 
     if request_type == "docker":

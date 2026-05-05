@@ -275,6 +275,20 @@ def handle_vm_control(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     )
 
 
+def handle_updates(kwargs: dict, config: JsonDict) -> str:
+    if not command_enabled(config, "updates"):
+        return "Updates command is disabled."
+
+    return write_action_request_and_wait(
+        {
+            "type": "updates",
+            "action": "check",
+            "sender_name": kwargs.get("sender_name"),
+            "sender_key": kwargs.get("sender_key"),
+        }
+    )
+
+
 def read_last_action_result() -> str:
     try:
         result = json.loads(ACTION_RESULT_FILE.read_text(encoding="utf-8"))
@@ -294,6 +308,8 @@ def format_help(config: JsonDict) -> list[str]:
         base.append("host")
     if "alerts" in enabled:
         base.append("alerts")
+    if "updates" in enabled:
+        base.append("updates")
     if "android" in enabled:
         base.append("android")
     if "disk" in enabled:
@@ -406,6 +422,9 @@ def bot(**kwargs):
 
     if command_name == "result":
         return normalize_response(read_last_action_result(), config)
+
+    if command_name == "updates":
+        return normalize_response(handle_updates(kwargs, config), config)
 
     if command_name == "alerts":
         metrics = require_metrics(config)

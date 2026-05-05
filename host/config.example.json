@@ -13,6 +13,7 @@
     "enabled": [
       "help",
       "alerts",
+      "updates",
       "android",
       "host",
       "disk",
@@ -27,6 +28,7 @@
     "triggers": {
       "help": ["!help"],
       "alerts": ["!alerts"],
+      "updates": ["!updates"],
       "android": ["!android"],
       "host": ["!host", "!status", "!server"],
       "disk": ["!disk"],
