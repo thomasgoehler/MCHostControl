@@ -178,7 +178,7 @@ def require_metrics(config: JsonDict) -> JsonDict | str | list[str]:
     return metrics
 
 
-def write_action_request_and_wait(request: dict) -> str:
+def write_action_request_and_wait(request: dict, wait_seconds: int = 5) -> str:
     request["created_at"] = int(time.time())
     temporary_file = ACTION_REQUEST_FILE.with_suffix(".tmp")
 
@@ -194,8 +194,11 @@ def write_action_request_and_wait(request: dict) -> str:
         temporary_file.unlink(missing_ok=True)
         return f"Could not create host action request: {error}"
 
-    for _ in range(10):
-        time.sleep(0.5)
+    poll_interval_seconds = 0.5
+    attempts = max(1, int(wait_seconds / poll_interval_seconds))
+
+    for _ in range(attempts):
+        time.sleep(poll_interval_seconds)
 
         try:
             result = json.loads(ACTION_RESULT_FILE.read_text(encoding="utf-8"))
@@ -285,7 +288,27 @@ def handle_updates(kwargs: dict, config: JsonDict) -> str:
             "action": "check",
             "sender_name": kwargs.get("sender_name"),
             "sender_key": kwargs.get("sender_key"),
-        }
+        },
+        wait_seconds=90,
+    )
+
+
+def handle_upgrade(kwargs: dict, parts: list[str], config: JsonDict) -> str:
+    if len(parts) != 2:
+        return "usage: bang upgrade <PIN>"
+
+    if not command_enabled(config, "upgrade"):
+        return "Upgrade command is disabled."
+
+    return write_action_request_and_wait(
+        {
+            "type": "upgrade",
+            "action": "run",
+            "pin_sha256": hashlib.sha256(parts[1].strip().encode("utf-8")).hexdigest(),
+            "sender_name": kwargs.get("sender_name"),
+            "sender_key": kwargs.get("sender_key"),
+        },
+        wait_seconds=1800,
     )
 
 
@@ -310,6 +333,8 @@ def format_help(config: JsonDict) -> list[str]:
         base.append("alerts")
     if "updates" in enabled:
         base.append("updates")
+    if "upgrade" in enabled:
+        base.append("upgrade")
     if "android" in enabled:
         base.append("android")
     if "disk" in enabled:
@@ -345,6 +370,9 @@ def format_help(config: JsonDict) -> list[str]:
     if "reboot" in control:
         trigger = safe_trigger_label(primary_trigger(config, "reboot", "!reboot"))
         lines.append(f"reboot: {trigger} <PIN>")
+    if "upgrade" in enabled:
+        trigger = safe_trigger_label(primary_trigger(config, "upgrade", "!upgrade"))
+        lines.append(f"upgrade: {trigger} <PIN>")
     return lines or ["No commands enabled."]
 
 
@@ -425,6 +453,9 @@ def bot(**kwargs):
 
     if command_name == "updates":
         return normalize_response(handle_updates(kwargs, config), config)
+
+    if command_name == "upgrade":
+        return normalize_response(handle_upgrade(kwargs, parts, config), config)
 
     if command_name == "alerts":
         metrics = require_metrics(config)

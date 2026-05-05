@@ -6,6 +6,7 @@ Control and monitor a Linux host via MeshCore RemoteTerm.
 
 - Host monitoring: CPU, RAM, disk, uptime, IP, temperatures
 - On-demand apt update check with upgrade count
+- PIN-protected apt upgrade on demand
 - Docker container listing and control
 - KVM/libvirt VM listing and control
 - Secure host reboot
@@ -106,6 +107,7 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
       "help",
       "alerts",
       "updates",
+      "upgrade",
       "android",
       "host",
       "disk",
@@ -121,6 +123,7 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
       "help": ["!help"],
       "alerts": ["!alerts"],
       "updates": ["!updates"],
+      "upgrade": ["!upgrade"],
       "android": ["!android"],
       "host": ["!host", "!status", "!server"],
       "disk": ["!disk"],
@@ -167,6 +170,7 @@ Useful host-side knobs:
 - `commands.triggers`: map incoming MeshCore commands to host-managed command names
 - `commands.docker_actions` and `commands.vm_actions`: restrict allowed control actions
 - `updates`: runs `apt update` on demand and reports how many packages can be upgraded
+- `upgrade`: runs `apt upgrade -y` on demand and requires the configured PIN
 - `display.max_message_len`: keeps the bot aligned with MeshCore message limits
 - `display.max_list_items`: controls how many containers, VMs or temperatures are shown
 - `names.docker` and `names.vms`: optional display aliases for long service names
@@ -223,6 +227,7 @@ All commands are DM-only and only accepted from sender keys allowed in `config.j
 !help
 !alerts
 !updates
+!upgrade <PIN>
 !android
 !host
 !disk

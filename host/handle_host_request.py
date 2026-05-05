@@ -90,11 +90,20 @@ def validate_sender(config: dict, request: dict) -> bool:
 
 
 def validate_reboot_pin(config: dict, request: dict) -> bool:
-    if not command_enabled(config, "reboot"):
-        write_result(False, "Reboot command is disabled.")
+    return validate_admin_pin(config, request, "reboot", require_reboot_enabled=True)
+
+
+def validate_admin_pin(
+    config: dict,
+    request: dict,
+    command_name: str,
+    require_reboot_enabled: bool = False,
+) -> bool:
+    if not command_enabled(config, command_name):
+        write_result(False, f"{command_name.capitalize()} command is disabled.")
         return False
 
-    if not config.get("allow_reboot", False):
+    if require_reboot_enabled and not config.get("allow_reboot", False):
         write_result(False, "Host reboot is disabled.")
         return False
 
@@ -110,7 +119,7 @@ def validate_reboot_pin(config: dict, request: dict) -> bool:
         return False
 
     if provided_hash != expected_hash:
-        write_result(False, "Invalid reboot PIN.")
+        write_result(False, "Invalid PIN.")
         return False
 
     return True
@@ -148,6 +157,30 @@ def handle_updates(config: dict) -> None:
         return
 
     write_result(True, f"{count} package(s) can be upgraded.")
+
+
+def handle_upgrade(config: dict) -> None:
+    if not command_enabled(config, "upgrade"):
+        write_result(False, "Upgrade command is disabled.")
+        return
+
+    success, output = run_command(
+        [
+            "apt-get",
+            "upgrade",
+            "-y",
+            "-o",
+            "Dpkg::Options::=--force-confdef",
+            "-o",
+            "Dpkg::Options::=--force-confold",
+        ],
+        timeout=1800,
+    )
+    if not success:
+        write_result(False, f"apt upgrade failed: {output}")
+        return
+
+    write_result(True, "apt upgrade completed.")
 
 
 def handle_docker(config: dict, action: str, name: str) -> None:
@@ -257,6 +290,11 @@ def main() -> None:
 
     if request_type == "updates" and action == "check":
         handle_updates(config)
+        return
+
+    if request_type == "upgrade" and action == "run":
+        if validate_admin_pin(config, request, "upgrade"):
+            handle_upgrade(config)
         return
 
     if request_type == "docker":
