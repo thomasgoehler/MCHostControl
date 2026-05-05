@@ -141,6 +141,10 @@ def primary_trigger(config: JsonDict, command_name: str, fallback: str) -> str:
     return fallback
 
 
+def usage_trigger(config: JsonDict, command_name: str, fallback: str) -> str:
+    return safe_trigger_label(primary_trigger(config, command_name, fallback))
+
+
 def resolve_command(command_token: str, config: JsonDict) -> str | None:
     token = command_token.lower()
     for command_name, triggers in get_command_triggers(config).items():
@@ -213,7 +217,7 @@ def write_action_request_and_wait(request: dict, wait_seconds: int = 5) -> str:
 
 def handle_reboot(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 2:
-        return "usage: bang reboot <PIN>"
+        return f"usage: {usage_trigger(config, 'reboot', '!reboot')} <PIN>"
 
     if not command_enabled(config, "reboot"):
         return "Reboot command is disabled."
@@ -234,7 +238,8 @@ def handle_reboot(kwargs: dict, parts: list[str], config: JsonDict) -> str:
 
 def handle_docker_control(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 3:
-        return "usage: bang dockerctl <start|stop|restart> <container>"
+        trigger = usage_trigger(config, "dockerctl", "!dockerctl")
+        return f"usage: {trigger} <start|stop|restart> <container>"
 
     if not command_enabled(config, "dockerctl"):
         return "Docker control is disabled."
@@ -257,7 +262,8 @@ def handle_docker_control(kwargs: dict, parts: list[str], config: JsonDict) -> s
 
 def handle_vm_control(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 3:
-        return "usage: bang vmctl <start|stop|restart> <vm>"
+        trigger = usage_trigger(config, "vmctl", "!vmctl")
+        return f"usage: {trigger} <start|stop|restart> <vm>"
 
     if not command_enabled(config, "vmctl"):
         return "VM control is disabled."
@@ -295,7 +301,7 @@ def handle_updates(kwargs: dict, config: JsonDict) -> str:
 
 def handle_upgrade(kwargs: dict, parts: list[str], config: JsonDict) -> str:
     if len(parts) != 2:
-        return "usage: bang upgrade <PIN>"
+        return f"usage: {usage_trigger(config, 'upgrade', '!upgrade')} <PIN>"
 
     if not command_enabled(config, "upgrade"):
         return "Upgrade command is disabled."

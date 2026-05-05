@@ -226,6 +226,7 @@ All commands are DM-only and only accepted from sender keys allowed in `config.j
 ```text
 !help
 !alerts
+!update
 !updates
 !upgrade <PIN>
 !android

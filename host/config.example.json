@@ -29,7 +29,7 @@
     "triggers": {
       "help": ["!help"],
       "alerts": ["!alerts"],
-      "updates": ["!updates"],
+      "updates": ["!update", "!updates"],
       "upgrade": ["!upgrade"],
       "android": ["!android"],
       "host": ["!host", "!status", "!server"],
