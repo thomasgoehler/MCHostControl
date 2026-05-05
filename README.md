@@ -104,6 +104,8 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
     "enabled": [
       "help",
       "alerts",
+      "robot",
+      "android",
       "host",
       "disk",
       "temp",
@@ -117,6 +119,8 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
     "triggers": {
       "help": ["!help"],
       "alerts": ["!alerts"],
+      "robot": ["!robot"],
+      "android": ["!android"],
       "host": ["!host", "!status", "!server"],
       "disk": ["!disk"],
       "temp": ["!temp"],
@@ -141,6 +145,9 @@ Start from `host/config.example.json`, copy it to `/opt/meshcore-hostbot/config.
     "ram_warn_percent": 90,
     "disk_warn_percent": 90
   },
+  "monitoring": {
+    "robot_process_keywords": ["pabot", "robot", "pybot"]
+  },
   "names": {
     "docker": {},
     "vms": {}
@@ -163,6 +170,7 @@ Useful host-side knobs:
 - `commands.docker_actions` and `commands.vm_actions`: restrict allowed control actions
 - `display.max_message_len`: keeps the bot aligned with MeshCore message limits
 - `display.max_list_items`: controls how many containers, VMs or temperatures are shown
+- `monitoring.robot_process_keywords`: controls which process names count as running Robot Framework jobs
 - `names.docker` and `names.vms`: optional display aliases for long service names
 - `thresholds.*`: warn levels used to build the `alerts` list in `metrics.json`
 
@@ -216,6 +224,8 @@ All commands are DM-only and only accepted from sender keys allowed in `config.j
 ```text
 !help
 !alerts
+!robot
+!android
 !host
 !disk
 !temp

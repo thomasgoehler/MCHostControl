@@ -13,6 +13,8 @@
     "enabled": [
       "help",
       "alerts",
+      "robot",
+      "android",
       "host",
       "disk",
       "temp",
@@ -26,6 +28,8 @@
     "triggers": {
       "help": ["!help"],
       "alerts": ["!alerts"],
+      "robot": ["!robot"],
+      "android": ["!android"],
       "host": ["!host", "!status", "!server"],
       "disk": ["!disk"],
       "temp": ["!temp"],
@@ -57,6 +61,13 @@
     "cpu_warn_percent": 85,
     "ram_warn_percent": 90,
     "disk_warn_percent": 90
+  },
+  "monitoring": {
+    "robot_process_keywords": [
+      "pabot",
+      "robot",
+      "pybot"
+    ]
   },
   "names": {
     "docker": {},

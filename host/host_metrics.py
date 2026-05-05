@@ -198,6 +198,70 @@ def get_kvm_vms() -> list[dict]:
     return vms
 
 
+def get_robotframework_processes(config: dict) -> list[dict]:
+    success, output = run_command(["ps", "-eo", "pid=,args="], timeout=10)
+    if not success:
+        return [{"pid": 0, "command": f"process check unavailable: {output}"}]
+
+    keywords = [str(item).lower() for item in config.get("monitoring", {}).get("robot_process_keywords", ["pabot", "robot", "pybot"])]
+    processes = []
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+
+        pid_text, command = parts
+        lowered = command.lower()
+        if not any(keyword and keyword in lowered for keyword in keywords):
+            continue
+
+        processes.append({"pid": int(pid_text), "command": command})
+
+    return processes
+
+
+def get_android_devices() -> list[dict]:
+    success, output = run_command(["adb", "devices", "-l"], timeout=10)
+    if not success:
+        return [{"serial": "adb unavailable", "state": output}]
+
+    devices = []
+    for line in output.splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            continue
+
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+
+        serial = parts[0]
+        state = parts[1]
+        extras = {}
+        for item in parts[2:]:
+            if ":" not in item:
+                continue
+            key, value = item.split(":", 1)
+            extras[key] = value
+
+        devices.append(
+            {
+                "serial": serial,
+                "state": state,
+                "model": extras.get("model", ""),
+                "device": extras.get("device", ""),
+                "transport_id": extras.get("transport_id", ""),
+            }
+        )
+
+    return devices
+
+
 def short_status(text: str, replacements: dict[str, str]) -> str:
     status = " ".join(str(text).split()).lower()
     for source, target in replacements.items():
@@ -251,6 +315,36 @@ def build_temperature_display(temperatures: list[dict], config: dict) -> list[st
     return [f"temp {format_temperature(item, unit)}" for item in temperatures[:limit]]
 
 
+def build_robot_display(processes: list[dict], config: dict) -> list[str]:
+    limit = int(config.get("display", {}).get("max_list_items", 8))
+    if not processes:
+        return ["robot: idle"]
+
+    if processes[0].get("pid") == 0:
+        return [f"robot: {processes[0].get('command', 'unavailable')}"]
+
+    lines = [f"robot: running {len(processes)}"]
+    for process in processes[:limit]:
+        command = " ".join(str(process.get("command", "")).split())
+        lines.append(f"pid {process.get('pid')}: {command[:90]}")
+    return lines
+
+
+def build_android_display(devices: list[dict], config: dict) -> list[str]:
+    limit = int(config.get("display", {}).get("max_list_items", 8))
+    if not devices:
+        return ["android: no devices"]
+
+    if devices[0].get("serial") == "adb unavailable":
+        return [f"android: {devices[0].get('state', 'adb unavailable')}"]
+
+    lines = [f"android: {len(devices)} device(s)"]
+    for device in devices[:limit]:
+        label = str(device.get("model") or device.get("device") or device.get("serial"))
+        lines.append(f"{label}: {device.get('state', 'unknown')}")
+    return lines
+
+
 def build_alerts(metrics: dict, config: dict) -> list[str]:
     thresholds = config.get("thresholds", {})
     alerts = []
@@ -288,11 +382,14 @@ def build_alerts(metrics: dict, config: dict) -> list[str]:
 def build_summary(metrics: dict) -> str:
     memory = metrics.get("memory", {})
     disk = metrics.get("disk", {})
+    robot_running = len([item for item in metrics.get("robot_processes", []) if int(item.get("pid", 0)) > 0])
+    android_connected = len([item for item in metrics.get("android_devices", []) if str(item.get("serial", "")) != "adb unavailable"])
     return (
         f"host {metrics.get('hostname', 'unknown')} | "
         f"cpu {metrics.get('cpu_percent', 0)}% | "
         f"ram {memory.get('used_percent', 0)}% | "
         f"disk {disk.get('used_percent', 0)}% | "
+        f"rf {robot_running} | adb {android_connected} | "
         f"up {format_uptime(metrics.get('uptime_seconds', 0))}"
     )
 
@@ -312,6 +409,8 @@ def main() -> None:
     temperatures = get_temperatures()
     docker_containers = get_docker_containers()
     kvm_vms = get_kvm_vms()
+    robot_processes = get_robotframework_processes(config)
+    android_devices = get_android_devices()
 
     metrics = {
         "timestamp": int(time.time()),
@@ -324,12 +423,16 @@ def main() -> None:
         "temperatures": temperatures,
         "docker_containers": docker_containers,
         "kvm_vms": kvm_vms,
+        "robot_processes": robot_processes,
+        "android_devices": android_devices,
         "uptime_seconds": get_uptime_seconds(),
         "summary": "",
         "disk_summary": "",
         "temperature_display": [],
         "docker_display": [],
         "vm_display": [],
+        "robot_display": [],
+        "android_display": [],
         "alerts": [],
     }
 
@@ -338,6 +441,8 @@ def main() -> None:
     metrics["temperature_display"] = build_temperature_display(temperatures, config)
     metrics["docker_display"] = build_docker_display(docker_containers, config)
     metrics["vm_display"] = build_vm_display(kvm_vms, config)
+    metrics["robot_display"] = build_robot_display(robot_processes, config)
+    metrics["android_display"] = build_android_display(android_devices, config)
     metrics["alerts"] = build_alerts(metrics, config)
 
     temporary_file = OUTPUT_FILE.with_suffix(".tmp")

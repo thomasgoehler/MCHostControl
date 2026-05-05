@@ -294,6 +294,10 @@ def format_help(config: JsonDict) -> list[str]:
         base.append("host")
     if "alerts" in enabled:
         base.append("alerts")
+    if "robot" in enabled:
+        base.append("robot")
+    if "android" in enabled:
+        base.append("android")
     if "disk" in enabled:
         base.append("disk")
     if "temp" in enabled:
@@ -336,6 +340,16 @@ def format_host(metrics: JsonDict) -> str:
 
 def format_disk(metrics: JsonDict) -> str:
     return str(metrics.get("disk_summary") or "Disk summary unavailable.")
+
+
+def format_robot(metrics: JsonDict) -> list[str] | str:
+    display = metrics.get("robot_display", [])
+    return display or "robot: unavailable"
+
+
+def format_android(metrics: JsonDict) -> list[str] | str:
+    display = metrics.get("android_display", [])
+    return display or "android: unavailable"
 
 
 def format_temperatures(metrics: JsonDict) -> list[str] | str:
@@ -412,6 +426,12 @@ def bot(**kwargs):
 
     if command_name == "host":
         return normalize_response(format_host(metrics), config)
+
+    if command_name == "robot":
+        return normalize_response(format_robot(metrics), config)
+
+    if command_name == "android":
+        return normalize_response(format_android(metrics), config)
 
     if command_name == "disk":
         return normalize_response(format_disk(metrics), config)
